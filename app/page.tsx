@@ -1,101 +1,163 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+import { FileUpload } from "@/components/file-upload";
+import { SchemaDefinition, type SchemaField } from "@/components/schema-definition";
+import { ResultsTable } from "@/components/results-table";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+import { type InvestmentMemo } from "@/lib/schema";
+import { useToast } from "@/components/ui/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+
+const PAGE_TITLE = "PDF Data Extractor";
+
+interface ProcessedFile {
+  file: File;
+  text?: string;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [files, setFiles] = useState<ProcessedFile[]>([]);
+  const [schema, setSchema] = useState<SchemaField[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [results, setResults] = useState<(InvestmentMemo & { fileName: string })[]>([]);
+  const { toast } = useToast();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleFilesSelected = (newFiles: File[]) => {
+    setFiles(prev => [...prev, ...newFiles.map(file => ({ file }))]);
+    toast({
+      title: "Files added",
+      description: `Added ${newFiles.length} file(s) for processing`,
+    });
+  };
+
+  const handleFileProcessed = (file: File, text: string) => {
+    setFiles(prev => 
+      prev.map(f => f.file === file ? { ...f, text } : f)
+    );
+    toast({
+      title: "File processed",
+      description: `Successfully extracted text from ${file.name}`,
+    });
+  };
+
+  const handleSchemaChange = (newSchema: SchemaField[]) => {
+    setSchema(newSchema);
+  };
+
+  const handleStartExtraction = async () => {
+    setIsProcessing(true);
+    const newResults = [];
+    let hasError = false;
+
+    try {
+      for (const { file, text } of files) {
+        if (!text) continue;
+
+        try {
+          const response = await fetch("/api/process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              text,
+              fileName: file.name,
+              schema
+            }),
+          });
+
+          if (!response.ok) {
+            console.error(`Failed to process ${file.name}:`, response.statusText);
+            hasError = true;
+            toast({
+              variant: "destructive",
+              title: "Processing failed",
+              description: `Failed to process ${file.name}. Please try again.`,
+            });
+            continue;
+          }
+
+          const { data } = await response.json();
+          newResults.push({ ...data, fileName: file.name });
+          toast({
+            title: "File processed",
+            description: `Successfully processed ${file.name}`,
+          });
+        } catch (error) {
+          console.error(`Error processing ${file.name}:`, error);
+          hasError = true;
+          toast({
+            variant: "destructive",
+            title: "Processing error",
+            description: `Error processing ${file.name}. Please try again.`,
+          });
+        }
+      }
+
+      setResults(newResults);
+      
+      if (newResults.length > 0) {
+        toast({
+          title: "Processing complete",
+          description: `Successfully processed ${newResults.length} file(s)${hasError ? ' with some errors' : ''}`,
+        });
+      }
+    } catch (error) {
+      console.error("Error processing files:", error);
+      toast({
+        variant: "destructive",
+        title: "Processing error",
+        description: "An error occurred while processing files. Please try again.",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="container mx-auto py-8 space-y-8">
+      <h1 className="text-3xl font-bold">{PAGE_TITLE}</h1>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <h2 className="text-xl font-semibold">Upload Files</h2>
+          <FileUpload 
+            onFilesSelected={handleFilesSelected}
+            onFileProcessed={handleFileProcessed}
+          />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+        
+        <div className="space-y-6">
+          <h2 className="text-xl font-semibold">Define Schema</h2>
+          <SchemaDefinition onSchemaChange={handleSchemaChange} />
+        </div>
+      </div>
+
+      <div className="flex justify-center">
+        <Button 
+          size="lg"
+          onClick={handleStartExtraction}
+          disabled={files.length === 0 || schema.length === 0 || isProcessing}
         >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          {isProcessing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            "Start Extraction"
+          )}
+        </Button>
+      </div>
+
+      {results.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">Results</h2>
+          <ResultsTable results={results} />
+        </div>
+      )}
+
+      <Toaster />
     </div>
   );
 }
